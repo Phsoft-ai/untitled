@@ -97,7 +97,7 @@ def add_cards_on_slide(slide, chunk_data, text_items_template, canvas_size, crop
             cy_px = center_pos_px.dy
 
             # [수정 1] 좌표 보정 계수 및 전역 오프셋 정의
-            HORIZONTAL_CORRECTION_FACTOR = 0.35
+            HORIZONTAL_CORRECTION_FACTOR = 0.9
             VERTICAL_CORRECTION_FACTOR = 0.93
             
             # [수정 2] 전역 수직 오프셋 (단위: 포인트)
