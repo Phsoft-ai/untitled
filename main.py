@@ -28,16 +28,21 @@ class TextItem(BaseModel):
     font_weight_bold: bool = Field(..., alias='fontWeightBold')
     font_family: Optional[str] = Field(None, alias='fontFamily')
 
+# --- 🚀 FIX: CanvasData 모델에 canvas_aspect_ratio 필드 추가 ---
 class CanvasData(BaseModel):
     background_image_bytes: Optional[str] = Field(None, alias='backgroundImageBytes')
     canvas_size: Dict[str, float] = Field(..., alias='canvasSize')
+    # Flutter에서 보낸 canvasAspectRatio를 받기 위한 필드입니다. Optional로 설정하여 이전 버전 앱과 호환성을 유지합니다.
+    canvas_aspect_ratio: Optional[float] = Field(None, alias='canvasAspectRatio')
     text_items: List[TextItem] = Field(..., alias='textItems')
     excel_data: List[Dict[str, str]] = Field(..., alias='excelData')
+# --- FIX END ---
+
 
 app = FastAPI()
 
 def crop_image_to_ratio(img: Image.Image, target_ratio: float) -> Image.Image:
-    # ... (기존과 동일)
+    # 기존과 동일한 함수
     img_width, img_height = img.size
     img_ratio = img_width / img_height
 
@@ -55,13 +60,18 @@ def crop_image_to_ratio(img: Image.Image, target_ratio: float) -> Image.Image:
 
 
 def add_cards_on_slide(slide, chunk_data, text_items_template, canvas_size, cropped_background_stream, page_width_inch, page_height_inch):
+    # 기존과 동일한 함수
     card_width_inch = page_width_inch / 2
     card_height_inch = page_height_inch / 2
     
     canvas_width_px = canvas_size['width']
     canvas_height_px = canvas_size['height']
 
-    pixels_per_inch = canvas_width_px / card_width_inch
+    # 픽셀-인치 변환 비율은 canvas_size와 카드 크기를 기준으로 계산합니다.
+    # canvas_size의 비율이 바뀌면 이 값도 자동으로 보정됩니다.
+    pixels_per_inch_w = canvas_width_px / card_width_inch
+    pixels_per_inch_h = canvas_height_px / card_height_inch
+
 
     grid_positions = [
         (0, 0),
@@ -75,6 +85,7 @@ def add_cards_on_slide(slide, chunk_data, text_items_template, canvas_size, crop
 
         if cropped_background_stream:
             cropped_background_stream.seek(0)
+            # 카드의 실제 크기에 맞춰 배경 이미지를 추가합니다.
             slide.shapes.add_picture(
                 cropped_background_stream,
                 Inches(base_left_inch),
@@ -91,50 +102,39 @@ def add_cards_on_slide(slide, chunk_data, text_items_template, canvas_size, crop
             else:
                 text_content = item_template.text
 
-            # --- 좌표 및 크기 계산 로직 (수정된 부분) ---
+            # --- 좌표 및 크기 계산 로직 (기존과 동일하게 유지) ---
+            # Flutter의 canvasSize가 이미 변경된 비율을 반영하므로, 이 로직은 수정할 필요가 없습니다.
             center_pos_px = item_template.center_position
             cx_px = center_pos_px.dx
             cy_px = center_pos_px.dy
 
-            # [수정 1] 좌표 보정 계수 및 전역 오프셋 정의
             HORIZONTAL_CORRECTION_FACTOR = 0.9
             VERTICAL_CORRECTION_FACTOR = 0.93
-            
-            # [수정 2] 전역 수직 오프셋 (단위: 포인트)
-            # 모든 텍스트 요소를 아래로 이동시키려면 양수 값을, 위로 이동시키려면 음수 값을 입력하세요.
-            # 이 값을 조절하여 전체 텍스트의 수직 위치를 한 번에 옮길 수 있습니다.
-            VERTICAL_OFFSET_PT = 3.5 # 예: 10포인트만큼 아래로 이동
+            VERTICAL_OFFSET_PT = 3.5
 
-            # 보정 계수를 적용하여 좌표를 재계산
             corrected_cx_px = cx_px * HORIZONTAL_CORRECTION_FACTOR
             corrected_cy_px = cy_px * VERTICAL_CORRECTION_FACTOR
-
-            # 오프셋을 픽셀 단위로 변환 (1 포인트 = 96/72 픽셀)
+            
             vertical_offset_px = VERTICAL_OFFSET_PT * (96 / 72)
-
-            # 1. Flutter의 중앙 기준 좌표를 카드 좌상단 기준의 절대 좌표(픽셀)로 변환
-            # 이때, 위에서 계산한 '보정된' 좌표를 사용하고, 전역 오프셋을 더해줍니다.
+            
             center_x_abs_px = (canvas_width_px / 2) + corrected_cx_px
-            center_y_abs_px = (canvas_height_px / 2) - corrected_cy_px + vertical_offset_px # <<< 여기 오프셋이 추가되었습니다.
+            center_y_abs_px = (canvas_height_px / 2) - corrected_cy_px + vertical_offset_px
 
             font_size_pt = item_template.font_size_pt
             measured_height_pt = item_template.measured_height_pt or font_size_pt
             
-            # 2. 텍스트 박스의 크기(픽셀) 결정
             text_box_width_px = canvas_width_px * 0.90
             text_box_height_px = (measured_height_pt * (96 / 72)) * 1.1
 
-            # 3. 텍스트 박스의 좌측 상단 좌표(픽셀) 계산
             left_px = center_x_abs_px - (text_box_width_px / 2)
             top_px = center_y_abs_px - (text_box_height_px / 2)
-
-            # 4. 계산된 픽셀 값들을 인치 단위로 변환
-            final_left_inch = left_px / pixels_per_inch
-            final_top_inch = top_px / pixels_per_inch
-            box_width_inch = text_box_width_px / pixels_per_inch
-            box_height_inch = text_box_height_px / pixels_per_inch
             
-            # --- 이후 텍스트 박스 추가 및 스타일링 로직은 기존과 동일 ---
+            # 픽셀-인치 변환 시, 가로/세로 각각의 비율을 사용합니다.
+            final_left_inch = left_px / pixels_per_inch_w
+            final_top_inch = top_px / pixels_per_inch_h
+            box_width_inch = text_box_width_px / pixels_per_inch_w
+            box_height_inch = text_box_height_px / pixels_per_inch_h
+            
             txBox = slide.shapes.add_textbox(
                 Inches(base_left_inch + final_left_inch),
                 Inches(base_top_inch + final_top_inch),
@@ -177,9 +177,9 @@ def add_cards_on_slide(slide, chunk_data, text_items_template, canvas_size, crop
 
 @app.post("/generate-ppt")
 async def generate_ppt(data: CanvasData):
-    # ... (이후 코드는 기존과 동일)
     prs = Presentation()
     
+    # PPT 슬라이드 크기는 A4 용지로 고정
     prs.slide_width = Inches(8.27)
     prs.slide_height = Inches(11.69)
     
@@ -188,16 +188,34 @@ async def generate_ppt(data: CanvasData):
 
     page_width_inch = prs.slide_width.inches
     page_height_inch = prs.slide_height.inches
+    
+    # --- 🚀 FIX: 배경 이미지를 자를 때 사용할 비율을 결정 ---
+    # 1. 기본값은 A4 용지의 1/4 비율
     card_width_inch = page_width_inch / 2
     card_height_inch = page_height_inch / 2
-    card_ratio = card_width_inch / card_height_inch
+    target_ratio = card_width_inch / card_height_inch
+    
+    # 2. 만약 Flutter에서 canvasAspectRatio 값을 보냈다면, 그 값을 우선적으로 사용
+    if data.canvas_aspect_ratio is not None and data.canvas_aspect_ratio > 0:
+        target_ratio = data.canvas_aspect_ratio
+        # Flutter에서 보낸 비율에 맞춰 카드의 너비 또는 높이를 재계산합니다.
+        # 이렇게 해야 배경 이미지가 카드에 정확히 맞춰집니다.
+        if target_ratio > (card_width_inch / card_height_inch):
+             # 새 비율이 기준보다 넓으면, 높이를 줄입니다.
+             card_height_inch = card_width_inch / target_ratio
+        else:
+            # 새 비율이 기준보다 좁으면, 너비를 줄입니다.
+            card_width_inch = card_height_inch * target_ratio
+
+    # --- FIX END ---
 
     cropped_background_stream = None
     if data.background_image_bytes:
         try:
             img_bytes = base64.b64decode(data.background_image_bytes)
             original_image = Image.open(io.BytesIO(img_bytes))
-            cropped_image = crop_image_to_ratio(original_image, card_ratio)
+            # 위에서 결정된 target_ratio를 사용하여 이미지를 자릅니다.
+            cropped_image = crop_image_to_ratio(original_image, target_ratio)
             cropped_background_stream = io.BytesIO()
             cropped_image.save(cropped_background_stream, format=original_image.format or 'PNG')
             cropped_background_stream.seek(0)
@@ -208,6 +226,7 @@ async def generate_ppt(data: CanvasData):
         slide_layout = prs.slide_layouts[6]
         slide = prs.slides.add_slide(slide_layout)
         
+        # add_cards_on_slide 함수에 재계산된 카드 크기를 전달합니다.
         add_cards_on_slide(
             slide=slide,
             chunk_data=chunk,
